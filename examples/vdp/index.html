@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SciMLWasm — Van der Pol, adaptive SimpleATsit5 in the browser</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
+  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; }
+  canvas { background: #fff; border: 1px solid #ddd; display: block; margin-bottom: 8px; }
+  .ctl { display: grid; grid-template-columns: 8em 1fr 8em; gap: 6px 12px; max-width: 720px; align-items: center; }
+  .ctl input[type=range] { width: 100%; }
+</style>
+<h2>Van der Pol / adaptive SimpleATsit5, solved in WebAssembly</h2>
+<div class="ctl">
+  <label for="mu">μ</label><input id="mu" type="range" min="0.1" max="50" step="0.1" value="10"><span id="muv"></span>
+  <label for="tend">t_end</label><input id="tend" type="range" min="5" max="100" step="1" value="30"><span id="tendv"></span>
+  <label for="ltol">log10(tol)</label><input id="ltol" type="range" min="-12" max="-2" step="0.5" value="-8"><span id="tolv"></span>
+</div>
+<pre id="out">loading vdp.wasm…</pre>
+<canvas id="ts" width="720" height="300"></canvas>
+<canvas id="dt" width="720" height="200"></canvas>
+<script type="module">
+const out = document.getElementById("out");
+const $ = (id) => document.getElementById(id);
+try {
+  const bytes = await fetch("vdp.wasm").then((r) => r.arrayBuffer());
+  const t0 = performance.now();
+  const module = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+  const imports = {};
+  for (const { module: m, name, kind } of WebAssembly.Module.imports(module)) {
+    if (m.startsWith("wasm:")) continue;
+    (imports[m] ??= {})[name] = kind === "function" ? () => {} : undefined;
+  }
+  const { exports: ex } = await WebAssembly.instantiate(module, imports);
+  const loadMs = (performance.now() - t0).toFixed(1);
+
+  const draw = (id, xs, ys, label) => {
+    const c = $(id), g = c.getContext("2d");
+    g.clearRect(0, 0, c.width, c.height);
+    const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
+    const sx = (x) => 40 + ((x - xmin) / (xmax - xmin || 1)) * (c.width - 60);
+    const sy = (y) => c.height - 24 - ((y - ymin) / (ymax - ymin || 1)) * (c.height - 44);
+    g.fillStyle = "#666"; g.font = "12px system-ui"; g.fillText(label, 44, 16);
+    g.strokeStyle = "#1f5fbf"; g.lineWidth = 1; g.beginPath();
+    xs.forEach((x, i) => (i ? g.lineTo(sx(x), sy(ys[i])) : g.moveTo(sx(x), sy(ys[i]))));
+    g.stroke();
+  };
+
+  const solve = () => {
+    const mu = +$("mu").value, tend = +$("tend").value, tol = 10 ** +$("ltol").value;
+    $("muv").textContent = mu; $("tendv").textContent = tend; $("tolv").textContent = tol.toExponential(0);
+    const t1 = performance.now();
+    const sol = ex.solve_vdp(mu, tend, tol);
+    const ms = (performance.now() - t1).toFixed(1);
+    const n = ex.vlen(sol), nsteps = n / 3;
+    const ts = [], u1 = [];
+    for (let i = 1; i <= n; i += 3) { ts.push(ex.vget(sol, i)); u1.push(ex.vget(sol, i + 1)); }
+    const dts = ts.slice(1).map((t, i) => t - ts[i]);
+    out.textContent =
+      `vdp.wasm: ${bytes.byteLength} bytes, compiled+instantiated in ${loadMs} ms\n` +
+      `solve_vdp(${mu}, ${tend}, ${tol.toExponential(0)}) in ${ms} ms — ${nsteps} accepted steps\n` +
+      `final u = [${ex.vget(sol, n - 1)}, ${ex.vget(sol, n)}]\n` +
+      `dt range: ${Math.min(...dts).toExponential(3)} … ${Math.max(...dts).toExponential(3)}`;
+    draw("ts", ts, u1, `u1(t), t ∈ [0, ${tend}]`);
+    draw("dt", ts.slice(1), dts.map(Math.log10), "log10(dt) per accepted step — adaptivity in wasm");
+  };
+  for (const id of ["mu", "tend", "ltol"]) $(id).addEventListener("input", solve);
+  solve();
+} catch (e) {
+  out.textContent = "ERROR: " + (e && e.stack || e);
+}
+</script>

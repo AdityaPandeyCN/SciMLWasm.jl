@@ -4,12 +4,14 @@ version = "0.1.0"
 authors = ["Aditya Pandey"]
 
 [deps]
+DiffEqBase = "2b5f629d-d688-5b77-993f-72d75c75574e"
 SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SimpleDiffEq = "05bca326-078c-5bf0-a5bf-ce7c7982d7fd"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 WasmTarget = "9f3a1415-1112-405b-ae89-c61daf9872bd"
 
 [compat]
+DiffEqBase = "7.20.0"
 SciMLBase = "3.50.2"
 SimpleDiffEq = "1.18.0"
 StaticArrays = "1.9.20"

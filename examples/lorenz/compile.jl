@@ -24,6 +24,17 @@ function solve_lorenz(σ::Float64, ρ::Float64, β::Float64, dt::Float64, tend::
     return out
 end
 
+# Harmonic-oscillator oracle: exact solution is (cos t, -sin t), so the wasm
+# result can be checked against Math.cos / Math.sin at a tight tolerance.
+osc(u, p, t) = SVector{2,Float64}(u[2], -u[1])
+
+function solve_osc(dt::Float64, tend::Float64)::Vector{Float64}
+    prob = ODEProblem(osc, SVector{2,Float64}(1.0, 0.0), (0.0, tend), 0.0)
+    sol = solve(prob, SimpleTsit5(); dt = dt)
+    u = sol.u[end]
+    return [u[1], u[2]]
+end
+
 vlen(v::Vector{Float64})::Int32 = Int32(length(v))
 vget(v::Vector{Float64}, i::Int32)::Float64 = v[i]
 
@@ -31,6 +42,7 @@ const here = @__DIR__
 
 bytes = compile_multi([
     (solve_lorenz, (Float64, Float64, Float64, Float64, Float64)),
+    (solve_osc, (Float64, Float64)),
     (vlen, (Vector{Float64},)),
     (vget, (Vector{Float64}, Int32)),
 ])

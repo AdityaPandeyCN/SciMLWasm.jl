@@ -69,6 +69,7 @@ const VDP_EQ2 = Int32[OP_P, 1, OP_CONST, 1, OP_U, 1, OP_CONST, 2, OP_POW, OP_SUB
         html = demo_html(:solve_vdp; args = [:μ => (10.0, 0.1, 50.0), :tol => 1e-8],
                          states = ["u1", "u2"], title = "VdP <demo>")
         @test occursin("<title>VdP &lt;demo&gt;</title>", html)
+        @test occursin("main { max-width: 720px; margin: 0 auto; }", html)
         @test occursin("\"fn\":\"solve_vdp\"", html)
         @test occursin("\"wasm\":\"solve_vdp.wasm\"", html)
         @test occursin("{\"name\":\"μ\",\"value\":10.0,\"min\":0.1,\"max\":50.0,\"fixed\":false}", html)

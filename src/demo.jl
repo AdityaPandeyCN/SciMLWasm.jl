@@ -80,19 +80,22 @@ const DEMO_TEMPLATE = raw"""
 <title>__TITLE__</title>
 <style>
   body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
-  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; }
+  main { max-width: 720px; margin: 0 auto; }
+  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; box-sizing: border-box; }
   pre.err { border-color: #c33; color: #a00; }
-  canvas { background: #fff; border: 1px solid #ddd; display: block; margin-bottom: 8px; }
-  .ctl { display: grid; grid-template-columns: 6em 1fr 6em; gap: 6px 12px; max-width: 720px; align-items: center; }
+  canvas { background: #fff; border: 1px solid #ddd; display: block; width: 100%; height: auto; margin-bottom: 8px; box-sizing: border-box; }
+  .ctl { display: grid; grid-template-columns: 6em 1fr 6em; gap: 6px 12px; align-items: center; }
   .ctl input[type=range] { width: 100%; }
   .ctl input[type=number] { width: 6em; }
 </style>
+<main>
 <h2 id="title"></h2>
 <div class="ctl" id="ctl"></div>
 <pre id="out">loading…</pre>
 <canvas id="ts" width="720" height="300"></canvas>
 <canvas id="ph" width="720" height="300"></canvas>
 <canvas id="dt" width="720" height="180"></canvas>
+</main>
 <script type="module">
 const CFG = __CFG__;
 const $ = (id) => document.getElementById(id);

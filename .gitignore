@@ -1,0 +1,3 @@
+Manifest.toml
+*.wasm
+node_modules

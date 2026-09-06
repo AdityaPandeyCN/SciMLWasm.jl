@@ -5,6 +5,7 @@ using WasmTarget
 using SimpleDiffEq
 using StaticArrays
 using SciMLBase
+using SciMLWasm: write_demo
 
 lorenz(u, p, t) = SVector{3,Float64}(p[1] * (u[2] - u[1]),
                           u[1] * (p[2] - u[3]) - u[2],
@@ -59,3 +60,11 @@ open(ref_path, "w") do io
           join(string.(last3), ", "), "]}\n")
 end
 println("wrote $ref_path: length=$(length(ref)) last3=$last3")
+
+# Browser page: sliders for the parameters, dt fixed; output rows are [x, y, z].
+write_demo(here, solve_lorenz;
+           args = [:σ => (10.0, 0.0, 30.0), :ρ => (28.0, 0.0, 60.0), :β => (8 / 3, 0.1, 10.0),
+                   :dt => 0.01, :tend => (20.0, 1.0, 100.0)],
+           states = ["x", "y", "z"], tcol = false, tstep = :dt, phase = (1, 3),
+           title = "Lorenz / SimpleTsit5 in WebAssembly", wasm = "lorenz.wasm")
+println("wrote $(joinpath(here, "index.html"))")

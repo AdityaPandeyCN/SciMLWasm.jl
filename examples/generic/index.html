@@ -1,0 +1,207 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>SciMLWasm: type an ODE, solve it in WebAssembly</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
+  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; }
+  pre.err { border-color: #c33; color: #a00; }
+  canvas { background: #fff; border: 1px solid #ddd; display: block; margin-bottom: 8px; }
+  textarea { width: 100%; max-width: 720px; height: 7em; font: 13px ui-monospace, monospace; padding: 8px; box-sizing: border-box; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; max-width: 720px; margin: 8px 0; }
+  .row label { display: flex; gap: 6px; align-items: center; }
+  .row input[type=number], .row input[type=text] { width: 7em; }
+  .ctl { display: grid; grid-template-columns: 6em 1fr 5em 5em 5em; gap: 6px 12px; max-width: 720px; align-items: center; margin: 8px 0; }
+  .ctl input[type=range] { width: 100%; }
+  .ctl input[type=number] { width: 5em; }
+  .ctl .hd { color: #666; font-size: 12px; }
+  h2 { margin-bottom: 4px; }
+  .hint { color: #666; margin: 0 0 12px; }
+</style>
+<h2>Any first-order ODE system, solved in WebAssembly</h2>
+<p class="hint">One equation per line as <code>dx = ...</code> or <code>x' = ...</code>. Unknown names become parameters with sliders. <code>t</code> is time. Functions: sin cos tan exp log sqrt abs tanh sinh cosh atan min max.</p>
+
+<div class="row">
+  <label>Preset
+    <select id="preset">
+      <option value="vdp">Van der Pol</option>
+      <option value="lorenz">Lorenz</option>
+      <option value="lv">Lotka–Volterra</option>
+      <option value="sir">SIR epidemic</option>
+      <option value="pend">Damped driven pendulum</option>
+      <option value="rossler">Rössler</option>
+    </select>
+  </label>
+</div>
+<textarea id="eqs" spellcheck="false"></textarea>
+
+<div class="row">
+  <label>u₀ <input id="u0" type="text" value="2, 0"></label>
+  <label>t₀ <input id="t0" type="number" value="0" step="any"></label>
+  <label>t_end <input id="tend" type="number" value="30" step="any"></label>
+  <label>dt₀ <input id="dt0" type="number" value="0.01" step="any"></label>
+  <label>log₁₀ tol <input id="ltol" type="number" value="-8" step="0.5" min="-13" max="-1"></label>
+</div>
+
+<div class="ctl" id="params"></div>
+
+<pre id="out">loading generic.wasm…</pre>
+<canvas id="ts" width="720" height="300"></canvas>
+<canvas id="ph" width="720" height="300"></canvas>
+
+<script type="module">
+import { parseSystem, makeSolver } from "./parser.mjs";
+
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+
+const PRESETS = {
+  vdp:     { eqs: "dx = y\ndy = mu*(1 - x^2)*y - x", u0: "2, 0", tend: 30, params: { mu: [10, 0, 50] } },
+  lorenz:  { eqs: "dx = s*(y - x)\ndy = x*(r - z) - y\ndz = x*y - b*z", u0: "1, 0, 0", tend: 40,
+             params: { s: [10, 0, 30], r: [28, 0, 60], b: [2.6667, 0.1, 10] } },
+  lv:      { eqs: "dx = a*x - b*x*y\ndy = d*x*y - g*y", u0: "10, 5", tend: 40,
+             params: { a: [1.1, 0, 3], b: [0.4, 0, 2], d: [0.1, 0, 1], g: [0.4, 0, 2] } },
+  sir:     { eqs: "dS = -beta*S*I\ndI = beta*S*I - gamma*I\ndR = gamma*I", u0: "0.99, 0.01, 0", tend: 100,
+             params: { beta: [0.5, 0, 2], gamma: [0.1, 0, 1] } },
+  pend:    { eqs: "dth = om\ndom = -c*om - sin(th) + A*cos(w*t)", u0: "0.2, 0", tend: 100,
+             params: { c: [0.2, 0, 2], A: [1.2, 0, 3], w: [0.667, 0, 3] } },
+  rossler: { eqs: "dx = -y - z\ndy = x + a*y\ndz = b + z*(x - c)", u0: "1, 1, 0", tend: 200,
+             params: { a: [0.2, 0, 0.5], b: [0.2, 0, 2], c: [5.7, 0, 15] } },
+};
+
+// Parameter slider state persists across re-parses so editing an equation
+// doesn't reset every slider.
+const paramState = new Map(); // name -> { value, min, max }
+
+function renderParams(names) {
+  const box = $("params");
+  box.innerHTML = "";
+  if (names.length === 0) return;
+  box.insertAdjacentHTML("beforeend",
+    `<span class="hd">parameter</span><span class="hd"></span><span class="hd">value</span><span class="hd">min</span><span class="hd">max</span>`);
+  for (const name of names) {
+    if (!paramState.has(name)) paramState.set(name, { value: 1, min: 0, max: 10 });
+    const st = paramState.get(name);
+    const step = (st.max - st.min) / 500 || 0.01;
+    box.insertAdjacentHTML("beforeend", `
+      <label for="p_${name}">${name}</label>
+      <input id="p_${name}" type="range" min="${st.min}" max="${st.max}" step="${step}" value="${st.value}">
+      <input id="pv_${name}" type="number" step="any" value="${st.value}">
+      <input id="pmin_${name}" type="number" step="any" value="${st.min}">
+      <input id="pmax_${name}" type="number" step="any" value="${st.max}">`);
+    const r = $(`p_${name}`), v = $(`pv_${name}`), mn = $(`pmin_${name}`), mx = $(`pmax_${name}`);
+    r.addEventListener("input", () => { st.value = +r.value; v.value = r.value; schedule(); });
+    v.addEventListener("input", () => { st.value = +v.value; r.value = v.value; schedule(); });
+    const rerange = () => {
+      st.min = +mn.value; st.max = +mx.value;
+      r.min = st.min; r.max = st.max; r.step = (st.max - st.min) / 500 || 0.01;
+      schedule();
+    };
+    mn.addEventListener("input", rerange);
+    mx.addEventListener("input", rerange);
+  }
+}
+
+function loadPreset(key) {
+  const p = PRESETS[key];
+  $("eqs").value = p.eqs;
+  $("u0").value = p.u0;
+  $("t0").value = 0;
+  $("tend").value = p.tend;
+  for (const [name, [value, min, max]] of Object.entries(p.params)) paramState.set(name, { value, min, max });
+  lastParamKey = "";
+  schedule();
+}
+
+const COLORS = ["#1f5fbf", "#c0392b", "#27ae60", "#8e44ad", "#d35400", "#16a085", "#7f8c8d", "#2c3e50"];
+
+function drawSeries(canvas, xs, series, labels, title) {
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const x of xs) { if (x < xmin) xmin = x; if (x > xmax) xmax = x; }
+  for (const s of series) for (const y of s) { if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+  if (!isFinite(ymin) || !isFinite(ymax)) { g.fillStyle = "#a00"; g.fillText("non-finite values: solution blew up", 44, 16); return; }
+  const sx = (x) => 40 + ((x - xmin) / (xmax - xmin || 1)) * (canvas.width - 60);
+  const sy = (y) => canvas.height - 24 - ((y - ymin) / (ymax - ymin || 1)) * (canvas.height - 44);
+  g.fillStyle = "#666"; g.font = "12px system-ui"; g.fillText(title, 44, 16);
+  let lx = canvas.width - 20;
+  for (let k = labels.length - 1; k >= 0; k--) {
+    const w = g.measureText(labels[k]).width;
+    lx -= w + 14;
+    g.fillStyle = COLORS[k % COLORS.length]; g.fillText(labels[k], lx, 16);
+  }
+  series.forEach((s, k) => {
+    g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = 1; g.beginPath();
+    for (let i = 0; i < xs.length; i++) (i ? g.lineTo(sx(xs[i]), sy(s[i])) : g.moveTo(sx(xs[i]), sy(s[i])));
+    g.stroke();
+  });
+}
+
+let solver = null, timer = null, lastParamKey = "";
+
+function schedule() { clearTimeout(timer); timer = setTimeout(solve, 30); }
+
+function solve() {
+  if (!solver) return;
+  let prog;
+  try {
+    prog = parseSystem($("eqs").value);
+  } catch (e) {
+    out.className = "err"; out.textContent = String(e.message ?? e); return;
+  }
+  const key = prog.params.join(",");
+  if (key !== lastParamKey) { renderParams(prog.params); lastParamKey = key; }
+
+  const u0 = $("u0").value.split(",").map((s) => parseFloat(s.trim()));
+  if (u0.length !== prog.states.length || u0.some((x) => !isFinite(x))) {
+    out.className = "err";
+    out.textContent = `u₀ needs ${prog.states.length} numbers (${prog.states.join(", ")}), got "${$("u0").value}"`;
+    return;
+  }
+  const t0 = +$("t0").value, tend = +$("tend").value, dt0 = +$("dt0").value, tol = 10 ** +$("ltol").value;
+  const pvals = prog.params.map((n) => paramState.get(n).value);
+
+  try {
+    const t1 = performance.now();
+    const sol = solver.solve(prog, pvals, u0, t0, tend, dt0, tol);
+    const ms = (performance.now() - t1).toFixed(1);
+    const finals = prog.states.map((n, k) => `${n} = ${sol.u[k][sol.nsteps - 1]}`).join(", ");
+    out.className = "";
+    out.textContent =
+      `states: ${prog.states.join(", ")}   parameters: ${prog.params.join(", ") || "none"}   bytecode: ${prog.code.length} words\n` +
+      `solved in ${ms} ms, ${sol.nsteps} accepted steps, tol ${tol.toExponential(0)}\n` +
+      `final: ${finals}`;
+    drawSeries($("ts"), sol.t, sol.u, prog.states, `u(t), t ∈ [${t0}, ${tend}]`);
+    const ph = $("ph");
+    if (prog.states.length >= 2) {
+      ph.style.display = "block";
+      drawSeries(ph, sol.u[0], [sol.u[1]], [prog.states[1]], `phase plane: ${prog.states[1]} vs ${prog.states[0]}`);
+    } else {
+      ph.style.display = "none";
+    }
+  } catch (e) {
+    out.className = "err"; out.textContent = "solve failed: " + (e && e.stack || e);
+  }
+}
+
+try {
+  const bytes = await fetch("generic.wasm").then((r) => r.arrayBuffer());
+  const t0 = performance.now();
+  const module = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+  const imports = {};
+  for (const { module: m, name, kind } of WebAssembly.Module.imports(module)) {
+    if (m.startsWith("wasm:")) continue;
+    (imports[m] ??= {})[name] = kind === "function" ? () => {} : undefined;
+  }
+  const { exports: ex } = await WebAssembly.instantiate(module, imports);
+  solver = makeSolver(ex);
+  console.log(`generic.wasm: ${bytes.byteLength} bytes, compiled+instantiated in ${(performance.now() - t0).toFixed(1)} ms`);
+
+  $("preset").addEventListener("change", (e) => loadPreset(e.target.value));
+  $("eqs").addEventListener("input", schedule);
+  for (const id of ["u0", "t0", "tend", "dt0", "ltol"]) $(id).addEventListener("input", schedule);
+  loadPreset("vdp");
+} catch (e) {
+  out.className = "err"; out.textContent = "ERROR: " + (e && e.stack || e);
+}
+</script>

@@ -1,0 +1,206 @@
+# Generates a self-describing browser page for a compiled solver export, so
+# examples never hand-write index.html. The page is one fixed template plus a
+# JSON config: which export to call, its argument list (sliders or fixed
+# values), the state names, and how the flat output vector is laid out.
+
+"""
+    demo_html(fn::Symbol; args, states, kwargs...) -> String
+
+HTML for an interactive page driving the wasm export `fn`.
+
+- `args`: pairs in the export's argument order. `:σ => (10.0, 0.0, 30.0)` is a
+  slider `(value, min, max)`; `:dt => 0.01` is a fixed value.
+- `states`: names of the state components in each output row.
+- `tcol`: `true` when each output row is `[t, u...]`, `false` for `[u...]`.
+- `tstep`: with `tcol = false`, the argument whose value is the step size, so
+  the page can reconstruct `t`; `nothing` plots against the step index.
+- `phase`: `(i, j)` state indices for a phase-plane plot, or `nothing`.
+- `wasm`: filename fetched next to the page, or `embed` the module bytes to
+  produce a self-contained page (works from `file://` and inside notebooks).
+"""
+function demo_html(fn::Symbol; args, states::Vector{String}, title::String = String(fn),
+                   tcol::Bool = true, tstep::Union{Nothing,Symbol} = nothing,
+                   phase::Union{Nothing,Tuple{Int,Int}} = length(states) >= 2 ? (1, 2) : nothing,
+                   wasm::String = String(fn) * ".wasm", embed::Union{Nothing,Vector{UInt8}} = nothing)
+    argspecs = map(args) do (name, spec)
+        if spec isa Tuple
+            length(spec) == 3 || throw(ArgumentError("slider spec for $name must be (value, min, max)"))
+            (name = String(name), value = Float64(spec[1]), min = Float64(spec[2]),
+             max = Float64(spec[3]), fixed = false)
+        else
+            (name = String(name), value = Float64(spec), min = 0.0, max = 0.0, fixed = true)
+        end
+    end
+    tstep === nothing || any(a -> a.name == String(tstep), argspecs) ||
+        throw(ArgumentError("tstep $tstep is not one of the args"))
+    cfg = (
+        title = title,
+        fn = String(fn),
+        args = argspecs,
+        states = states,
+        tcol = tcol,
+        tstep = tstep === nothing ? nothing : String(tstep),
+        phase = phase === nothing ? nothing : [phase[1], phase[2]],
+        wasm = embed === nothing ? wasm : nothing,
+        wasmB64 = embed === nothing ? nothing : base64encode(embed),
+    )
+    return replace(DEMO_TEMPLATE, "__TITLE__" => _html_escape(title), "__CFG__" => _json(cfg))
+end
+
+"""
+    write_demo(path, fn::Symbol; kwargs...)
+    write_demo(path, f::Function; kwargs...)
+
+Write [`demo_html`](@ref) to `path`. If `path` is a directory, `index.html`
+inside it. Returns the path written.
+"""
+function write_demo(path::AbstractString, fn::Symbol; kwargs...)
+    out = isdir(path) ? joinpath(path, "index.html") : String(path)
+    write(out, demo_html(fn; kwargs...))
+    return out
+end
+write_demo(path::AbstractString, f::Function; kwargs...) = write_demo(path, nameof(f); kwargs...)
+
+_html_escape(s::AbstractString) = replace(s, "&" => "&amp;", "<" => "&lt;", ">" => "&gt;")
+
+# Minimal JSON writer for the config: strings, numbers, bools, nothing,
+# vectors, and NamedTuples. "/" is escaped so "</script>" cannot appear.
+_json(x::AbstractString) = '"' * replace(x, "\\" => "\\\\", "\"" => "\\\"", "/" => "\\/",
+                                          "\n" => "\\n", "\r" => "\\r", "\t" => "\\t") * '"'
+_json(x::Bool) = x ? "true" : "false"
+_json(x::Integer) = string(x)
+_json(x::AbstractFloat) = isfinite(x) ? repr(x) : "null"
+_json(::Nothing) = "null"
+_json(x::AbstractVector) = "[" * join(map(_json, x), ",") * "]"
+_json(x::NamedTuple) = "{" * join(("$(_json(String(k))):$(_json(v))" for (k, v) in pairs(x)), ",") * "}"
+
+const DEMO_TEMPLATE = raw"""
+<!doctype html>
+<meta charset="utf-8">
+<title>__TITLE__</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
+  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; }
+  pre.err { border-color: #c33; color: #a00; }
+  canvas { background: #fff; border: 1px solid #ddd; display: block; margin-bottom: 8px; }
+  .ctl { display: grid; grid-template-columns: 6em 1fr 6em; gap: 6px 12px; max-width: 720px; align-items: center; }
+  .ctl input[type=range] { width: 100%; }
+  .ctl input[type=number] { width: 6em; }
+</style>
+<h2 id="title"></h2>
+<div class="ctl" id="ctl"></div>
+<pre id="out">loading…</pre>
+<canvas id="ts" width="720" height="300"></canvas>
+<canvas id="ph" width="720" height="300"></canvas>
+<canvas id="dt" width="720" height="180"></canvas>
+<script type="module">
+const CFG = __CFG__;
+const $ = (id) => document.getElementById(id);
+const out = $("out");
+const COLORS = ["#1f5fbf", "#c0392b", "#27ae60", "#8e44ad", "#d35400", "#16a085", "#7f8c8d", "#2c3e50"];
+document.title = CFG.title;
+$("title").textContent = CFG.title;
+
+const values = Object.fromEntries(CFG.args.map((a) => [a.name, a.value]));
+for (const a of CFG.args) {
+  if (a.fixed) continue;
+  const step = (a.max - a.min) / 500 || 0.01;
+  $("ctl").insertAdjacentHTML("beforeend", `
+    <label for="r_${a.name}">${a.name}</label>
+    <input id="r_${a.name}" type="range" min="${a.min}" max="${a.max}" step="${step}" value="${a.value}">
+    <input id="n_${a.name}" type="number" step="any" value="${a.value}">`);
+}
+
+function drawSeries(canvas, xs, series, labels, title) {
+  const g = canvas.getContext("2d");
+  g.clearRect(0, 0, canvas.width, canvas.height);
+  let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
+  for (const x of xs) { if (x < xmin) xmin = x; if (x > xmax) xmax = x; }
+  for (const s of series) for (const y of s) { if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+  g.font = "12px system-ui";
+  if (!isFinite(ymin) || !isFinite(ymax)) { g.fillStyle = "#a00"; g.fillText("non-finite values", 44, 16); return; }
+  const sx = (x) => 40 + ((x - xmin) / (xmax - xmin || 1)) * (canvas.width - 60);
+  const sy = (y) => canvas.height - 24 - ((y - ymin) / (ymax - ymin || 1)) * (canvas.height - 44);
+  g.fillStyle = "#666"; g.fillText(title, 44, 16);
+  let lx = canvas.width - 20;
+  for (let k = labels.length - 1; k >= 0; k--) {
+    lx -= g.measureText(labels[k]).width + 14;
+    g.fillStyle = COLORS[k % COLORS.length]; g.fillText(labels[k], lx, 16);
+  }
+  series.forEach((s, k) => {
+    g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = 1; g.beginPath();
+    for (let i = 0; i < xs.length; i++) (i ? g.lineTo(sx(xs[i]), sy(s[i])) : g.moveTo(sx(xs[i]), sy(s[i])));
+    g.stroke();
+  });
+}
+
+let ex = null, timer = null;
+const schedule = () => { clearTimeout(timer); timer = setTimeout(solve, 30); };
+
+function solve() {
+  if (!ex) return;
+  const argv = CFG.args.map((a) => values[a.name]);
+  const N = CFG.states.length, stride = CFG.tcol ? N + 1 : N;
+  try {
+    const t1 = performance.now();
+    const sol = ex[CFG.fn](...argv);
+    const ms = (performance.now() - t1).toFixed(1);
+    const len = ex.vlen(sol), nsteps = len / stride;
+    const dt = CFG.tstep ? values[CFG.tstep] : 1;
+    const t = new Float64Array(nsteps);
+    const u = CFG.states.map(() => new Float64Array(nsteps));
+    for (let i = 0; i < nsteps; i++) {
+      const base = stride * i;
+      t[i] = CFG.tcol ? ex.vget(sol, base + 1) : i * dt;
+      for (let j = 0; j < N; j++) u[j][i] = ex.vget(sol, base + (CFG.tcol ? 2 : 1) + j);
+    }
+    const call = `${CFG.fn}(${CFG.args.map((a) => `${a.name}=${values[a.name]}`).join(", ")})`;
+    const finals = CFG.states.map((s, j) => `${s} = ${u[j][nsteps - 1]}`).join(", ");
+    out.className = "";
+    out.textContent = `${call}\nsolved in ${ms} ms, ${nsteps} ${CFG.tcol ? "accepted steps" : "steps"}\nfinal: ${finals}`;
+    const xlabel = CFG.tcol || CFG.tstep ? "t" : "step";
+    drawSeries($("ts"), t, u, CFG.states, `u(${xlabel})`);
+    if (CFG.phase) {
+      const [i, j] = CFG.phase;
+      $("ph").hidden = false;
+      drawSeries($("ph"), u[i - 1], [u[j - 1]], [CFG.states[j - 1]], `${CFG.states[j - 1]} vs ${CFG.states[i - 1]}`);
+    } else {
+      $("ph").hidden = true;
+    }
+    if (CFG.tcol && nsteps > 1) {
+      const dts = new Float64Array(nsteps - 1);
+      for (let i = 1; i < nsteps; i++) dts[i - 1] = Math.log10(t[i] - t[i - 1]);
+      $("dt").hidden = false;
+      drawSeries($("dt"), t.subarray(1), [dts], [], "log10(dt) per accepted step");
+    } else {
+      $("dt").hidden = true;
+    }
+  } catch (e) {
+    out.className = "err"; out.textContent = "solve failed: " + (e && e.stack || e);
+  }
+}
+
+try {
+  const bytes = CFG.wasmB64
+    ? Uint8Array.from(atob(CFG.wasmB64), (c) => c.charCodeAt(0))
+    : await fetch(CFG.wasm).then((r) => r.arrayBuffer());
+  const module = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
+  const imports = {};
+  for (const { module: m, name, kind } of WebAssembly.Module.imports(module)) {
+    if (m.startsWith("wasm:")) continue;
+    (imports[m] ??= {})[name] = kind === "function" ? () => {} : undefined;
+  }
+  ({ exports: ex } = await WebAssembly.instantiate(module, imports));
+  if (typeof ex[CFG.fn] !== "function") throw new Error(`export ${CFG.fn} not found`);
+  for (const a of CFG.args) {
+    if (a.fixed) continue;
+    const r = $(`r_${a.name}`), n = $(`n_${a.name}`);
+    r.addEventListener("input", () => { values[a.name] = +r.value; n.value = r.value; schedule(); });
+    n.addEventListener("input", () => { values[a.name] = +n.value; r.value = n.value; schedule(); });
+  }
+  solve();
+} catch (e) {
+  out.className = "err"; out.textContent = "ERROR: " + (e && e.stack || e);
+}
+</script>
+"""

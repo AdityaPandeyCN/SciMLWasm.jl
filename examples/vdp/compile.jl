@@ -4,6 +4,7 @@
 
 using WasmTarget, SimpleDiffEq, StaticArrays, SciMLBase
 using DiffEqBase
+using SciMLWasm: write_demo
 
 vdp(u, p, t) = SVector{2,Float64}(u[2], p * (1 - u[1]^2) * u[2] - u[1])
 
@@ -60,3 +61,10 @@ open(ref_path, "w") do io
               ", \"interp_u1_at_17p3\": ", interp_ref, "}\n")
 end
 println("wrote $ref_path: nsteps=$nsteps final_u1=$final_u1 final_u2=$final_u2 interp_u1(17.3)=$interp_ref")
+
+# Browser page: output rows are [t, u1, u2], so the page also plots the step sizes.
+write_demo(here, solve_vdp;
+           args = [:μ => (10.0, 0.1, 50.0), :tend => (30.0, 5.0, 100.0), :tol => 1e-8],
+           states = ["u1", "u2"], tcol = true,
+           title = "Van der Pol / adaptive SimpleATsit5 in WebAssembly", wasm = "vdp.wasm")
+println("wrote $(joinpath(here, "index.html"))")

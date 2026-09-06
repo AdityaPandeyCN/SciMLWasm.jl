@@ -1,3 +1,5 @@
 Manifest.toml
 *.wasm
 node_modules
+examples/lorenz/index.html
+examples/vdp/index.html

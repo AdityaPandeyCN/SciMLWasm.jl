@@ -1,5 +1,8 @@
 Manifest.toml
 *.wasm
+!examples/generic/generic.wasm
+!examples/lorenz/lorenz.wasm
+!examples/vdp/vdp.wasm
 node_modules
-examples/lorenz/index.html
-examples/vdp/index.html
+public
+.vercel

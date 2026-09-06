@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "mkdir -p public/lorenz public/vdp && cp examples/generic/index.html examples/generic/parser.mjs examples/generic/generic.wasm public/ && cp examples/lorenz/index.html examples/lorenz/lorenz.wasm public/lorenz/ && cp examples/vdp/index.html examples/vdp/vdp.wasm public/vdp/",
+  "outputDirectory": "public",
+  "headers": [
+    {
+      "source": "/(.*)\\.wasm",
+      "headers": [
+        { "key": "Content-Type", "value": "application/wasm" }
+      ]
+    }
+  ]
+}

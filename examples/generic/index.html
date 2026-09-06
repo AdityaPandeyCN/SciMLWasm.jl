@@ -3,20 +3,22 @@
 <title>SciMLWasm: type an ODE, solve it in WebAssembly</title>
 <style>
   body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
-  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; }
+  main { max-width: 720px; margin: 0 auto; }
+  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; box-sizing: border-box; }
   pre.err { border-color: #c33; color: #a00; }
-  canvas { background: #fff; border: 1px solid #ddd; display: block; margin-bottom: 8px; }
-  textarea { width: 100%; max-width: 720px; height: 7em; font: 13px ui-monospace, monospace; padding: 8px; box-sizing: border-box; }
-  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; max-width: 720px; margin: 8px 0; }
+  canvas { background: #fff; border: 1px solid #ddd; display: block; width: 100%; height: auto; margin-bottom: 8px; box-sizing: border-box; }
+  textarea { width: 100%; height: 7em; font: 13px ui-monospace, monospace; padding: 8px; box-sizing: border-box; }
+  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
   .row label { display: flex; gap: 6px; align-items: center; }
   .row input[type=number], .row input[type=text] { width: 7em; }
-  .ctl { display: grid; grid-template-columns: 6em 1fr 5em 5em 5em; gap: 6px 12px; max-width: 720px; align-items: center; margin: 8px 0; }
+  .ctl { display: grid; grid-template-columns: 6em 1fr 5em 5em 5em; gap: 6px 12px; align-items: center; margin: 8px 0; }
   .ctl input[type=range] { width: 100%; }
   .ctl input[type=number] { width: 5em; }
   .ctl .hd { color: #666; font-size: 12px; }
   h2 { margin-bottom: 4px; }
   .hint { color: #666; margin: 0 0 12px; }
 </style>
+<main>
 <h2>Any first-order ODE system, solved in WebAssembly</h2>
 <p class="hint">One equation per line as <code>dx = ...</code> or <code>x' = ...</code>. Unknown names become parameters with sliders. <code>t</code> is time. Functions: sin cos tan exp log sqrt abs tanh sinh cosh atan min max.</p>
 
@@ -47,6 +49,7 @@
 <pre id="out">loading generic.wasm…</pre>
 <canvas id="ts" width="720" height="300"></canvas>
 <canvas id="ph" width="720" height="300"></canvas>
+</main>
 
 <script type="module">
 import { parseSystem, makeSolver } from "./parser.mjs";

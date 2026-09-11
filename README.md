@@ -13,14 +13,15 @@ src/
   demo.jl          generates a browser page for a compiled export
   build.jl         one build step shared by every example
 examples/
-  common/wasm.mjs  shared loader used by every page and Node check
-  generic/         type equations at runtime, pick a solver
-  lorenz/ vdp/ rober/   one compiled right-hand side each
+  generic/         the app: write equations, pick a solver, solve in the browser
+  common/wasm.mjs  shared loader used by the app and every Node check
+  lorenz/ vdp/ rober/   compiled-RHS validation harnesses (one system each)
 ```
 
-Each example is one `compile.jl` holding only its equations and slider ranges,
-plus a `run.mjs` that checks the wasm against a native reference. The pages are
-generated, never hand-written.
+`examples/generic` is the product. The three per-system directories each hold a
+`compile.jl` with one right-hand side, a `run.mjs` that checks the wasm against
+a native reference, and a generated page; they validate the compiled path and
+are what the app's Node check compares itself against.
 
 ## Two ways to solve
 
@@ -78,10 +79,10 @@ node examples/rober/run.mjs                          # wasm against the native r
 node examples/generic/parser_test.mjs                # parser alone, no wasm needed
 ```
 
-Serve `examples/` with any static file server; `examples/index.html` links the
-four demos. The test suite asserts that the interpreted Van der Pol right-hand
-side is bit-identical to the hand-written one, and `examples/generic/run.mjs`
-asserts the same of the wasm build against both compiled examples.
+Serve `examples/` with any static file server; the root page opens the app. The
+test suite asserts that the interpreted Van der Pol right-hand side is
+bit-identical to the hand-written one, and `examples/generic/run.mjs` asserts
+the same of the wasm build against both compiled harnesses.
 
 ## Generated pages
 

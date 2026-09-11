@@ -1,66 +1,146 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>SciMLWasm: type an ODE, solve it in WebAssembly</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SciMLWasm</title>
 <style>
-  body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
-  main { max-width: 720px; margin: 0 auto; }
-  pre { background: #fff; border: 1px solid #ddd; padding: 12px; margin: 12px 0; white-space: pre-wrap; box-sizing: border-box; }
-  pre.err { border-color: #c33; color: #a00; }
-  canvas { background: #fff; border: 1px solid #ddd; display: block; width: 100%; height: auto; margin-bottom: 8px; box-sizing: border-box; }
-  textarea { width: 100%; height: 7em; font: 13px ui-monospace, monospace; padding: 8px; box-sizing: border-box; }
-  .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
-  .row label { display: flex; gap: 6px; align-items: center; }
-  .row input[type=number], .row input[type=text] { width: 7em; }
-  .ctl { display: grid; grid-template-columns: 6em 1fr 5em 5em 5em; gap: 6px 12px; align-items: center; margin: 8px 0; }
-  .ctl input[type=range] { width: 100%; }
-  .ctl input[type=number] { width: 5em; }
-  .ctl .hd { color: #666; font-size: 12px; }
-  h2 { margin-bottom: 4px; }
-  .hint { color: #666; margin: 0 0 12px; }
+  :root { --ink: #1f2328; --muted: #656d76; --line: #d0d7de; --bg: #f6f8fa; --card: #fff; --accent: #0969da; --err: #cf222e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+  header { padding: 18px 28px 12px; border-bottom: 1px solid var(--line); background: var(--card); display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 20px; }
+  header .sub { color: var(--muted); }
+  main { display: grid; grid-template-columns: minmax(340px, 460px) 1fr; gap: 20px; padding: 20px 28px; align-items: start; }
+  @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  select, input[type=text], input[type=number], textarea, button { font: inherit; color: inherit; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 6px 8px; }
+  textarea { width: 100%; height: 9em; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; tab-size: 4; }
+  textarea:focus, input:focus, select:focus { outline: 2px solid #b6d4fe; border-color: var(--accent); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .row > div { flex: 1 1 90px; }
+  .row input, .row select { width: 100%; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .params { display: grid; grid-template-columns: 5em 1fr 5.5em 4.5em 4.5em; gap: 6px 8px; align-items: center; }
+  .params .hd { font-size: 11px; color: var(--muted); }
+  .params input[type=range] { width: 100%; }
+  .params input[type=number] { width: 100%; padding: 4px 6px; }
+  .params code { font-size: 13px; }
+  .status { font: 13px ui-monospace, Menlo, monospace; white-space: pre-wrap; margin: 0; padding: 10px 12px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); }
+  .status.err { color: var(--err); border-color: #ffb3b8; background: #fff5f5; }
+  .status.busy { color: var(--muted); }
+  canvas { width: 100%; height: auto; display: block; background: #fff; border: 1px solid var(--line); border-radius: 6px; }
+  .plotbar { display: flex; gap: 10px; align-items: center; margin: 0 0 8px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .plotbar select { padding: 3px 6px; }
+  details { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  details .help { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.6; }
+  details code { background: var(--bg); padding: 0 4px; border-radius: 3px; }
+  .about { font-size: 12px; color: var(--muted); }
+  kbd { font: 11px ui-monospace, Menlo, monospace; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
 </style>
+
+<header>
+  <h1>SciMLWasm</h1>
+  <span class="sub">Write a system of ODEs, solve it in WebAssembly. No server, nothing recompiles.</span>
+</header>
+
 <main>
-<h2>Any first-order ODE system, solved in WebAssembly</h2>
-<p class="hint">One equation per line as <code>dx = ...</code> or <code>x' = ...</code>. Unknown names become parameters with sliders. <code>t</code> is time. Functions: sin cos tan exp log sqrt abs tanh sinh cosh atan min max.</p>
+<section>
+  <div class="card">
+    <h2>Equations</h2>
+    <div class="row" style="margin-bottom:8px">
+      <div style="flex:2 1 200px"><label for="preset">Load an example</label>
+        <select id="preset">
+          <option value="">Blank</option>
+          <option value="vdp">Van der Pol oscillator</option>
+          <option value="lorenz">Lorenz attractor</option>
+          <option value="lv">Lotka-Volterra predator-prey</option>
+          <option value="sir">SIR epidemic</option>
+          <option value="pend">Damped driven pendulum</option>
+          <option value="rossler">Rössler attractor</option>
+          <option value="rober">Robertson chemical kinetics (stiff)</option>
+          <option value="vdpstiff">Van der Pol, μ = 1000 (stiff)</option>
+        </select></div>
+    </div>
+    <textarea id="eqs" spellcheck="false" placeholder="dx = y&#10;dy = mu*(1 - x^2)*y - x"></textarea>
+    <details>
+      <summary>Syntax</summary>
+      <p class="help">
+        One equation per line, <code>dx = …</code> or <code>x' = …</code>. The left side names a state; states are ordered as written.<br>
+        Any other name on the right is a parameter and gets a slider. <code>t</code> is time. Numbers may use <code>1e-3</code>. <code>#</code> starts a comment.<br>
+        Operators <code>+ - * / ^</code> (<code>^</code> is right-associative, <code>**</code> also works). Functions:
+        <code>sin cos tan exp log sqrt abs tanh sinh cosh atan min max</code>. Constants <code>pi</code>, <code>e</code>. Up to 8 states.
+      </p>
+    </details>
+  </div>
 
-<div class="row">
-  <label>Preset
-    <select id="preset">
-      <option value="vdp">Van der Pol</option>
-      <option value="lorenz">Lorenz</option>
-      <option value="lv">Lotka–Volterra</option>
-      <option value="sir">SIR epidemic</option>
-      <option value="pend">Damped driven pendulum</option>
-      <option value="rossler">Rössler</option>
-      <option value="rober">Robertson (stiff)</option>
-      <option value="vdpstiff">Van der Pol μ=1000 (stiff)</option>
-    </select>
-  </label>
-  <label>Solver
-    <select id="method">
-      <option value="atsit5">SimpleATsit5 (explicit, adaptive)</option>
-      <option value="rb23">Rosenbrock23 (stiff, W-method)</option>
-    </select>
-  </label>
-  <label>budget (s) <input id="budget" type="number" value="5" min="0.5" step="0.5" style="width:4em"></label>
-  <button id="stop" disabled>Stop</button>
-</div>
-<textarea id="eqs" spellcheck="false"></textarea>
+  <div class="card">
+    <h2>Initial state and time</h2>
+    <div class="row">
+      <div style="flex:2 1 140px"><label for="u0">u(t₀), comma-separated</label><input id="u0" type="text" value="2, 0"></div>
+      <div><label for="t0">t₀</label><input id="t0" type="number" value="0" step="any"></div>
+      <div><label for="tend">t_end</label><input id="tend" type="number" value="30" step="any"></div>
+    </div>
+  </div>
 
-<div class="row">
-  <label>u₀ <input id="u0" type="text" value="2, 0"></label>
-  <label>t₀ <input id="t0" type="number" value="0" step="any"></label>
-  <label>t_end <input id="tend" type="number" value="30" step="any"></label>
-  <label>dt₀ <input id="dt0" type="number" value="0.01" step="any"></label>
-  <label>log₁₀ reltol <input id="ltol" type="number" value="-8" step="0.5" min="-13" max="-1"></label>
-  <label>log₁₀ abstol <input id="latol" type="number" value="-8" step="0.5" min="-14" max="-1"></label>
-  <label><input id="logx" type="checkbox"> log t axis</label>
-</div>
+  <div class="card">
+    <h2>Parameters</h2>
+    <div class="params" id="params"><span class="about">None yet. Names on the right-hand side that are not states become parameters.</span></div>
+  </div>
 
-<div class="ctl" id="params"></div>
+  <div class="card">
+    <h2>Solver</h2>
+    <div class="row">
+      <div style="flex:2 1 220px"><label for="method">Method</label>
+        <select id="method">
+          <option value="atsit5">SimpleATsit5: explicit Runge-Kutta, adaptive (non-stiff)</option>
+          <option value="rb23">Rosenbrock23: linearly implicit, adaptive (stiff)</option>
+        </select></div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <div><label for="dt0">initial dt</label><input id="dt0" type="number" value="0.01" step="any"></div>
+      <div><label for="ltol">log₁₀ reltol</label><input id="ltol" type="number" value="-8" step="0.5" min="-13" max="-1"></div>
+      <div><label for="latol">log₁₀ abstol</label><input id="latol" type="number" value="-8" step="0.5" min="-14" max="-1"></div>
+      <div><label for="budget">budget (s)</label><input id="budget" type="number" value="5" min="0.5" step="0.5"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div style="flex:0 0 auto"><button id="solve" class="primary">Solve</button></div>
+      <div style="flex:0 0 auto"><button id="stop" disabled>Stop</button></div>
+      <div style="flex:0 0 auto"><button id="csv" disabled>Download CSV</button></div>
+      <div class="about" style="flex:1 1 auto; align-self:center">Solves as you type. <kbd>Ctrl</kbd>+<kbd>Enter</kbd> solves now.</div>
+    </div>
+  </div>
+</section>
 
-<pre id="out">loading generic.wasm…</pre>
-<canvas id="ts" width="720" height="300"></canvas>
-<canvas id="ph" width="720" height="300"></canvas>
+<section>
+  <div class="card">
+    <h2>Result</h2>
+    <pre id="out" class="status busy">loading generic.wasm…</pre>
+  </div>
+  <div class="card">
+    <div class="plotbar">
+      <span>Time series</span>
+      <label style="display:inline;margin:0"><input id="logx" type="checkbox"> log₁₀ t axis</label>
+    </div>
+    <canvas id="ts" width="900" height="360"></canvas>
+  </div>
+  <div class="card" id="phcard">
+    <div class="plotbar">
+      <span>Phase plane</span>
+      <select id="phx"></select> <span>vs</span> <select id="phy"></select>
+    </div>
+    <canvas id="ph" width="900" height="360"></canvas>
+  </div>
+  <p class="about">
+    The page parses the equations to bytecode for a small stack machine inside a single WebAssembly module that
+    also carries both integrators, so any system solves without recompiling. Rosenbrock23 forms a finite-difference
+    Jacobian and factors a matrix every step, which is what keeps it stable on stiff problems where the explicit
+    method needs unusably small steps. Try the Robertson example with each method.
+  </p>
+</section>
 </main>
 
 <script type="module">
@@ -71,9 +151,9 @@ const out = $("out");
 
 const PRESETS = {
   vdp:     { eqs: "dx = y\ndy = mu*(1 - x^2)*y - x", u0: "2, 0", tend: 30, params: { mu: [10, 0, 50] } },
-  lorenz:  { eqs: "dx = s*(y - x)\ndy = x*(r - z) - y\ndz = x*y - b*z", u0: "1, 0, 0", tend: 40,
+  lorenz:  { eqs: "dx = s*(y - x)\ndy = x*(r - z) - y\ndz = x*y - b*z", u0: "1, 0, 0", tend: 40, phase: [0, 2],
              params: { s: [10, 0, 30], r: [28, 0, 60], b: [2.6667, 0.1, 10] } },
-  lv:      { eqs: "dx = a*x - b*x*y\ndy = d*x*y - g*y", u0: "10, 5", tend: 40,
+  lv:      { eqs: "# prey x, predator y\ndx = a*x - b*x*y\ndy = d*x*y - g*y", u0: "10, 5", tend: 40,
              params: { a: [1.1, 0, 3], b: [0.4, 0, 2], d: [0.1, 0, 1], g: [0.4, 0, 2] } },
   sir:     { eqs: "dS = -beta*S*I\ndI = beta*S*I - gamma*I\ndR = gamma*I", u0: "0.99, 0.01, 0", tend: 100,
              params: { beta: [0.5, 0, 2], gamma: [0.1, 0, 1] } },
@@ -81,33 +161,34 @@ const PRESETS = {
              params: { c: [0.2, 0, 2], A: [1.2, 0, 3], w: [0.667, 0, 3] } },
   rossler: { eqs: "dx = -y - z\ndy = x + a*y\ndz = b + z*(x - c)", u0: "1, 1, 0", tend: 200,
              params: { a: [0.2, 0, 0.5], b: [0.2, 0, 2], c: [5.7, 0, 15] } },
-  rober:   { eqs: "dy1 = -k1*y1 + k3*y2*y3\ndy2 = k1*y1 - k2*y2^2 - k3*y2*y3\ndy3 = k2*y2^2",
+  rober:   { eqs: "# Robertson: rates span nine orders of magnitude\ndy1 = -k1*y1 + k3*y2*y3\ndy2 = k1*y1 - k2*y2^2 - k3*y2*y3\ndy3 = k2*y2^2",
              u0: "1, 0, 0", tend: 1e5, dt0: 1e-6, ltol: -6, latol: -8, method: "rb23", logx: true,
              params: { k1: [0.04, 0.001, 0.2], k2: [3e7, 1e6, 1e8], k3: [1e4, 1e3, 1e5] } },
   vdpstiff:{ eqs: "dx = y\ndy = mu*(1 - x^2)*y - x", u0: "2, 0", tend: 3000, dt0: 1e-4, ltol: -6, latol: -6,
              method: "rb23", params: { mu: [1000, 1, 5000] } },
 };
 
-// Parameter slider state persists across re-parses so editing an equation
-// doesn't reset every slider.
-const paramState = new Map(); // name -> { value, min, max }
+// Slider state survives re-parses so editing an equation keeps the other sliders.
+const paramState = new Map();
 
 function renderParams(names) {
   const box = $("params");
   box.innerHTML = "";
-  if (names.length === 0) return;
-  box.insertAdjacentHTML("beforeend",
-    `<span class="hd">parameter</span><span class="hd"></span><span class="hd">value</span><span class="hd">min</span><span class="hd">max</span>`);
+  if (names.length === 0) {
+    box.insertAdjacentHTML("beforeend", `<span class="about">None. Names on the right-hand side that are not states become parameters.</span>`);
+    return;
+  }
+  box.insertAdjacentHTML("beforeend", `<span class="hd">name</span><span class="hd"></span><span class="hd">value</span><span class="hd">min</span><span class="hd">max</span>`);
   for (const name of names) {
     if (!paramState.has(name)) paramState.set(name, { value: 1, min: 0, max: 10 });
     const st = paramState.get(name);
     const step = (st.max - st.min) / 500 || 0.01;
     box.insertAdjacentHTML("beforeend", `
-      <label for="p_${name}">${name}</label>
-      <input id="p_${name}" type="range" min="${st.min}" max="${st.max}" step="${step}" value="${st.value}">
-      <input id="pv_${name}" type="number" step="any" value="${st.value}">
-      <input id="pmin_${name}" type="number" step="any" value="${st.min}">
-      <input id="pmax_${name}" type="number" step="any" value="${st.max}">`);
+      <code>${name}</code>
+      <input id="p_${name}" type="range" min="${st.min}" max="${st.max}" step="${step}" value="${st.value}" aria-label="${name}">
+      <input id="pv_${name}" type="number" step="any" value="${st.value}" aria-label="${name} value">
+      <input id="pmin_${name}" type="number" step="any" value="${st.min}" aria-label="${name} min">
+      <input id="pmax_${name}" type="number" step="any" value="${st.max}" aria-label="${name} max">`);
     const r = $(`p_${name}`), v = $(`pv_${name}`), mn = $(`pmin_${name}`), mx = $(`pmax_${name}`);
     r.addEventListener("input", () => { st.value = +r.value; v.value = r.value; schedule(); });
     v.addEventListener("input", () => { st.value = +v.value; r.value = v.value; schedule(); });
@@ -123,6 +204,7 @@ function renderParams(names) {
 
 function loadPreset(key) {
   const p = PRESETS[key];
+  if (!p) { $("eqs").value = ""; schedule(); return; }
   $("eqs").value = p.eqs;
   $("u0").value = p.u0;
   $("t0").value = 0;
@@ -134,39 +216,51 @@ function loadPreset(key) {
   $("logx").checked = !!p.logx;
   for (const [name, [value, min, max]] of Object.entries(p.params)) paramState.set(name, { value, min, max });
   lastParamKey = "";
+  wantPhase = p.phase ?? null;
   schedule();
 }
 
-const COLORS = ["#1f5fbf", "#c0392b", "#27ae60", "#8e44ad", "#d35400", "#16a085", "#7f8c8d", "#2c3e50"];
+const COLORS = ["#0969da", "#cf222e", "#1a7f37", "#8250df", "#bc4c00", "#0e8a8a", "#57606a", "#24292f"];
 
 function drawSeries(canvas, xs, series, labels, title) {
-  const g = canvas.getContext("2d");
-  g.clearRect(0, 0, canvas.width, canvas.height);
+  const g = canvas.getContext("2d"), W = canvas.width, H = canvas.height;
+  g.clearRect(0, 0, W, H);
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
   for (const x of xs) { if (x < xmin) xmin = x; if (x > xmax) xmax = x; }
   for (const s of series) for (const y of s) { if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
-  if (!isFinite(ymin) || !isFinite(ymax)) { g.fillStyle = "#a00"; g.fillText("non-finite values: solution blew up", 44, 16); return; }
-  const sx = (x) => 40 + ((x - xmin) / (xmax - xmin || 1)) * (canvas.width - 60);
-  const sy = (y) => canvas.height - 24 - ((y - ymin) / (ymax - ymin || 1)) * (canvas.height - 44);
-  g.fillStyle = "#666"; g.font = "12px system-ui"; g.fillText(title, 44, 16);
-  let lx = canvas.width - 20;
+  g.font = "12px system-ui";
+  if (!isFinite(ymin) || !isFinite(ymax) || !isFinite(xmin)) { g.fillStyle = "#cf222e"; g.fillText("non-finite values: the solution blew up", 48, 20); return; }
+  if (ymax === ymin) { ymax += 1; ymin -= 1; }
+  const L = 56, R = 16, T = 28, B = 30;
+  const sx = (x) => L + ((x - xmin) / (xmax - xmin || 1)) * (W - L - R);
+  const sy = (y) => H - B - ((y - ymin) / (ymax - ymin)) * (H - T - B);
+  g.strokeStyle = "#eaeef2"; g.fillStyle = "#656d76"; g.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = ymin + (i / 4) * (ymax - ymin), py = sy(y);
+    g.beginPath(); g.moveTo(L, py); g.lineTo(W - R, py); g.stroke();
+    g.textAlign = "right"; g.fillText(fmt(y), L - 6, py + 4);
+    const x = xmin + (i / 4) * (xmax - xmin), px = sx(x);
+    g.beginPath(); g.moveTo(px, T); g.lineTo(px, H - B); g.stroke();
+    g.textAlign = "center"; g.fillText(fmt(x), px, H - B + 16);
+  }
+  g.textAlign = "left"; g.fillStyle = "#656d76"; g.fillText(title, L, 16);
+  let lx = W - R;
   for (let k = labels.length - 1; k >= 0; k--) {
-    const w = g.measureText(labels[k]).width;
-    lx -= w + 14;
+    lx -= g.measureText(labels[k]).width + 16;
     g.fillStyle = COLORS[k % COLORS.length]; g.fillText(labels[k], lx, 16);
   }
   series.forEach((s, k) => {
-    g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = 1; g.beginPath();
+    g.strokeStyle = COLORS[k % COLORS.length]; g.lineWidth = 1.4; g.beginPath();
     for (let i = 0; i < xs.length; i++) (i ? g.lineTo(sx(xs[i]), sy(s[i])) : g.moveTo(sx(xs[i]), sy(s[i])));
     g.stroke();
   });
 }
+const fmt = (v) => Math.abs(v) >= 1e4 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(1) : +v.toFixed(3);
 
 let worker = null, ready = false, busy = false, queued = false;
-let timer = null, lastParamKey = "", reqId = 0, watchdog = null;
+let timer = null, lastParamKey = "", reqId = 0, watchdog = null, wantPhase = null;
+let lastSolution = null, pending = null;
 
-// A wasm solve cannot be interrupted, so a busy worker is terminated and
-// replaced whenever a newer request arrives or the time budget runs out.
 function startWorker() {
   worker?.terminate();
   ready = false; busy = false;
@@ -174,7 +268,7 @@ function startWorker() {
   worker.onmessage = (e) => {
     const m = e.data;
     if ("ready" in m) {
-      if (!m.ready) { out.className = "err"; out.textContent = "ERROR: " + m.error; return; }
+      if (!m.ready) { out.className = "status err"; out.textContent = "ERROR: " + m.error; return; }
       ready = true;
       console.log(`generic.wasm: ${m.bytes} bytes, worker ready`);
       if (queued) { queued = false; solve(); }
@@ -183,19 +277,17 @@ function startWorker() {
     if (m.id !== reqId) return;
     busy = false;
     clearTimeout(watchdog); $("stop").disabled = true;
-    if (!m.ok) { out.className = "err"; out.textContent = "solve failed: " + m.error; return; }
+    if (!m.ok) { out.className = "status err"; out.textContent = "solve failed: " + m.error; return; }
     render(m);
   };
 }
 
-function schedule() { clearTimeout(timer); timer = setTimeout(solve, 30); }
-
-let pending = null;
+function schedule() { clearTimeout(timer); timer = setTimeout(solve, 40); }
 
 function abort(reason) {
   clearTimeout(watchdog); $("stop").disabled = true;
-  out.className = "err";
-  out.textContent = reason + "\nThe solver was terminated and reloaded; change a setting to solve again. For a stiff system choose Rosenbrock23.";
+  out.className = "status err";
+  out.textContent = reason + "\nThe solver was terminated and reloaded; change a setting to solve again.\nA stiff system needs Rosenbrock23.";
   queued = false;
   startWorker();
 }
@@ -203,74 +295,106 @@ function abort(reason) {
 function solve() {
   if (!ready) { queued = true; return; }
   if (busy) { queued = true; startWorker(); return; }
+  const text = $("eqs").value;
+  if (!text.trim()) { out.className = "status"; out.textContent = "Write a system above, or load an example."; renderParams([]); lastParamKey = ""; return; }
   let prog;
   try {
-    prog = parseSystem($("eqs").value);
+    prog = parseSystem(text);
   } catch (e) {
-    out.className = "err"; out.textContent = String(e.message ?? e); return;
+    out.className = "status err"; out.textContent = String(e.message ?? e); return;
   }
   const key = prog.params.join(",");
   if (key !== lastParamKey) { renderParams(prog.params); lastParamKey = key; }
 
   const u0 = $("u0").value.split(",").map((s) => parseFloat(s.trim()));
   if (u0.length !== prog.states.length || u0.some((x) => !isFinite(x))) {
-    out.className = "err";
-    out.textContent = `u₀ needs ${prog.states.length} numbers (${prog.states.join(", ")}), got "${$("u0").value}"`;
+    out.className = "status err";
+    out.textContent = `u(t₀) needs ${prog.states.length} number${prog.states.length === 1 ? "" : "s"} for (${prog.states.join(", ")}); got "${$("u0").value}"`;
     return;
   }
   const t0 = +$("t0").value, tend = +$("tend").value, dt0 = +$("dt0").value;
+  if (!(tend > t0)) { out.className = "status err"; out.textContent = "t_end must be greater than t₀"; return; }
   const reltol = 10 ** +$("ltol").value, method = $("method").value;
   const abstol = method === "atsit5" ? reltol : 10 ** +$("latol").value;
   $("latol").disabled = method === "atsit5";
   const pvals = prog.params.map((n) => paramState.get(n).value);
   const budget = Math.max(0.5, +$("budget").value) * 1000;
 
-  pending = { prog, t0, tend, reltol, abstol, method };
+  pending = { prog, t0, tend, reltol, abstol, method, pvals };
   const id = ++reqId;
   clearTimeout(watchdog);
-  watchdog = setTimeout(() => abort(`No result after ${budget / 1000} s (${method === "rb23" ? "Rosenbrock23" : "SimpleATsit5"}).`), budget);
-  $("stop").disabled = false;
+  watchdog = setTimeout(() => abort(`No result after ${budget / 1000} s with ${method === "rb23" ? "Rosenbrock23" : "SimpleATsit5"}.`), budget);
+  $("stop").disabled = false; $("csv").disabled = true;
   busy = true;
-  out.className = ""; out.textContent = "solving…";
+  out.className = "status busy"; out.textContent = "solving…";
   worker.postMessage({ id, prog: { states: prog.states, params: prog.params, code: prog.code, starts: prog.starts, consts: prog.consts },
                        pvals, u0, t0, tend, dt0, opts: { abstol, reltol, method } });
 }
 
+function fillAxisSelects(states) {
+  for (const id of ["phx", "phy"]) {
+    const sel = $(id), prev = sel.value;
+    sel.innerHTML = states.map((s, i) => `<option value="${i}">${s}</option>`).join("");
+    sel.value = (prev !== "" && states[+prev] !== undefined) ? prev : (id === "phx" ? "0" : String(Math.min(1, states.length - 1)));
+  }
+  if (wantPhase) { $("phx").value = String(wantPhase[0]); $("phy").value = String(wantPhase[1]); wantPhase = null; }
+}
+
 function render(m) {
-  const { prog, t0, tend, reltol, abstol, method } = pending;
+  const { prog, t0, tend, reltol, abstol, method, pvals } = pending;
   const sol = { t: m.t, u: m.u, nsteps: m.nsteps };
-  const ms = m.ms.toFixed(1);
-  const finals = prog.states.map((n, k) => `${n} = ${sol.u[k][sol.nsteps - 1]}`).join(", ");
-  const solverName = method === "rb23" ? "Rosenbrock23" : "SimpleATsit5";
+  lastSolution = { prog, sol, ms: m.ms };
+  $("csv").disabled = false;
   const tlast = sol.t[sol.nsteps - 1];
-  const early = tlast < tend ? `STOPPED EARLY at t = ${tlast} (error estimate NaN or step underflow; solution may blow up)\n` : "";
-  out.className = early ? "err" : "";
+  const early = tlast < tend ? `STOPPED EARLY at t = ${tlast}: error estimate became NaN or the step underflowed (the solution may blow up)\n` : "";
+  const finals = prog.states.map((n, k) => `${n} = ${sol.u[k][sol.nsteps - 1]}`).join("\n  ");
+  const pv = prog.params.length ? prog.params.map((n, k) => `${n} = ${pvals[k]}`).join(", ") : "none";
+  const name = method === "rb23" ? "Rosenbrock23" : "SimpleATsit5";
+  out.className = early ? "status err" : "status";
   out.textContent = early +
-    `states: ${prog.states.join(", ")}   parameters: ${prog.params.join(", ") || "none"}   bytecode: ${prog.code.length} words\n` +
-    `${solverName}: solved in ${ms} ms, ${sol.nsteps} accepted steps, reltol ${reltol.toExponential(0)}, abstol ${abstol.toExponential(0)}\n` +
-    `final: ${finals}`;
-  if ($("logx").checked) {
-    const keep = [];
-    for (let i = 0; i < sol.nsteps; i++) if (sol.t[i] > 0) keep.push(i);
-    drawSeries($("ts"), Float64Array.from(keep, (i) => Math.log10(sol.t[i])),
-               sol.u.map((s) => Float64Array.from(keep, (i) => s[i])), prog.states, `u(log10 t)`);
-  } else {
-    drawSeries($("ts"), sol.t, sol.u, prog.states, `u(t), t ∈ [${t0}, ${tend}]`);
+    `${name}: ${sol.nsteps - 1} accepted steps in ${m.ms.toFixed(1)} ms   reltol ${reltol.toExponential(0)}, abstol ${abstol.toExponential(0)}\n` +
+    `states ${prog.states.join(", ")}   parameters ${pv}   bytecode ${prog.code.length} words\n` +
+    `u(${tlast}) =\n  ${finals}`;
+  const useLog = $("logx").checked;
+  let xs = sol.t, ser = sol.u, xl = "t";
+  if (useLog) {
+    const keep = []; for (let i = 0; i < sol.nsteps; i++) if (sol.t[i] > 0) keep.push(i);
+    xs = Float64Array.from(keep, (i) => Math.log10(sol.t[i])); ser = sol.u.map((s) => Float64Array.from(keep, (i) => s[i])); xl = "log₁₀ t";
   }
-  const ph = $("ph");
+  drawSeries($("ts"), xs, ser, prog.states, `u(${xl}) over [${t0}, ${tend}]`);
   if (prog.states.length >= 2) {
-    ph.style.display = "block";
-    drawSeries(ph, sol.u[0], [sol.u[1]], [prog.states[1]], `phase plane: ${prog.states[1]} vs ${prog.states[0]}`);
+    $("phcard").hidden = false;
+    const same = $("phx").options.length === prog.states.length && [...$("phx").options].every((o, i) => o.textContent === prog.states[i]);
+    if (!same || wantPhase) fillAxisSelects(prog.states);
+    const i = +$("phx").value, j = +$("phy").value;
+    drawSeries($("ph"), sol.u[i], [sol.u[j]], [prog.states[j]], `${prog.states[j]} against ${prog.states[i]}`);
   } else {
-    ph.style.display = "none";
+    $("phcard").hidden = true;
   }
+}
+
+function downloadCSV() {
+  if (!lastSolution) return;
+  const { prog, sol } = lastSolution;
+  const lines = ["t," + prog.states.join(",")];
+  for (let i = 0; i < sol.nsteps; i++) lines.push(sol.t[i] + "," + prog.states.map((_, k) => sol.u[k][i]).join(","));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = "solution.csv"; a.click(); URL.revokeObjectURL(a.href);
 }
 
 $("preset").addEventListener("change", (e) => loadPreset(e.target.value));
 $("eqs").addEventListener("input", schedule);
+$("eqs").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); solve(); } });
 for (const id of ["u0", "t0", "tend", "dt0", "ltol", "latol"]) $(id).addEventListener("input", schedule);
 for (const id of ["method", "logx"]) $(id).addEventListener("change", schedule);
+for (const id of ["phx", "phy"]) $(id).addEventListener("change", () => {
+  if (lastSolution && pending) render({ t: lastSolution.sol.t, u: lastSolution.sol.u, nsteps: lastSolution.sol.nsteps, ms: lastSolution.ms });
+});
+$("solve").addEventListener("click", solve);
 $("stop").addEventListener("click", () => abort("Stopped."));
+$("csv").addEventListener("click", downloadCSV);
+$("preset").value = "vdp";
 loadPreset("vdp");
 startWorker();
 </script>

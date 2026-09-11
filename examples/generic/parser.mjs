@@ -10,6 +10,8 @@
 // that is not a state, `t`, a function, or a named constant becomes a
 // parameter, numbered in order of first appearance.
 
+import { readFlat } from "../common/wasm.mjs";
+
 export const OP = {
   CONST: 0, U: 1, P: 2, T: 3,
   ADD: 4, SUB: 5, MUL: 6, DIV: 7, POW: 8, NEG: 9,
@@ -249,23 +251,26 @@ export function makeSolver(ex) {
 
   return {
     // Returns { t: Float64Array, u: Float64Array[] (one per state), nsteps }.
-    solve(prog, paramValues, u0, t0, tend, dt0, tol) {
+    // method: "atsit5" (explicit, adaptive SimpleATsit5) or "rb23" (stiff, Rosenbrock23).
+    solve(prog, paramValues, u0, t0, tend, dt0, { abstol, reltol, method = "atsit5" }) {
       const N = prog.states.length;
-      const fn = ex[`solve_generic_${N}`];
-      if (!fn) throw new Error(`no compiled solver for ${N} states`);
       if (u0.length !== N) throw new Error(`u0 has ${u0.length} values, system has ${N} states`);
       if (paramValues.length !== prog.params.length) throw new Error("parameter count mismatch");
-      const sol = fn(pushI32(prog.code), pushI32(prog.starts), pushF64(prog.consts),
-                     pushF64(paramValues), pushF64(u0), t0, tend, dt0, tol);
-      const len = ex.vlen(sol), nsteps = len / (N + 1);
-      const t = new Float64Array(nsteps);
-      const u = Array.from({ length: N }, () => new Float64Array(nsteps));
-      for (let i = 0; i < nsteps; i++) {
-        const base = (N + 1) * i;
-        t[i] = ex.vget(sol, base + 1);
-        for (let j = 0; j < N; j++) u[j][i] = ex.vget(sol, base + 2 + j);
+      const args = [pushI32(prog.code), pushI32(prog.starts), pushF64(prog.consts),
+                    pushF64(paramValues), pushF64(u0), t0, tend, dt0];
+      let sol;
+      if (method === "rb23") {
+        sol = ex.solve_generic_rb23(...args, abstol, reltol);
+      } else if (method === "atsit5") {
+        const fn = ex[`solve_generic_${N}`];
+        if (!fn) throw new Error(`no compiled explicit solver for ${N} states`);
+        if (abstol !== reltol) throw new Error("SimpleATsit5 export uses one tolerance for abstol and reltol");
+        sol = fn(...args, reltol);
+      } else {
+        throw new Error(`unknown method ${method}`);
       }
-      return { t, u, nsteps };
+      const { t, u, rows } = readFlat(ex, sol, N);
+      return { t, u, nsteps: rows };
     },
     evalExpr(prog, k, uVals, paramValues, t) {
       return ex.eval_expr(pushI32(prog.code), pushI32(prog.starts), pushF64(prog.consts),

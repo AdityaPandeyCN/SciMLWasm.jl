@@ -15,12 +15,14 @@ HTML for an interactive page driving the wasm export `fn`.
 - `tstep`: with `tcol = false`, the argument whose value is the step size, so
   the page can reconstruct `t`; `nothing` plots against the step index.
 - `phase`: `(i, j)` state indices for a phase-plane plot, or `nothing`.
+- `logx`: plot the time series against `log10(t)` (stiff problems spanning decades).
 - `wasm`: filename fetched next to the page, or `embed` the module bytes to
   produce a self-contained page (works from `file://` and inside notebooks).
 """
 function demo_html(fn::Symbol; args, states::Vector{String}, title::String = String(fn),
                    tcol::Bool = true, tstep::Union{Nothing,Symbol} = nothing,
                    phase::Union{Nothing,Tuple{Int,Int}} = length(states) >= 2 ? (1, 2) : nothing,
+                   logx::Bool = false,
                    wasm::String = String(fn) * ".wasm", embed::Union{Nothing,Vector{UInt8}} = nothing)
     argspecs = map(args) do (name, spec)
         if spec isa Tuple
@@ -41,6 +43,7 @@ function demo_html(fn::Symbol; args, states::Vector{String}, title::String = Str
         tcol = tcol,
         tstep = tstep === nothing ? nothing : String(tstep),
         phase = phase === nothing ? nothing : [phase[1], phase[2]],
+        logx = logx,
         wasm = embed === nothing ? wasm : nothing,
         wasmB64 = embed === nothing ? nothing : base64encode(embed),
     )
@@ -162,7 +165,14 @@ function solve() {
     out.className = "";
     out.textContent = `${call}\nsolved in ${ms} ms, ${nsteps} ${CFG.tcol ? "accepted steps" : "steps"}\nfinal: ${finals}`;
     const xlabel = CFG.tcol || CFG.tstep ? "t" : "step";
-    drawSeries($("ts"), t, u, CFG.states, `u(${xlabel})`);
+    if (CFG.logx) {
+      const keep = [];
+      for (let i = 0; i < nsteps; i++) if (t[i] > 0) keep.push(i);
+      const lt = Float64Array.from(keep, (i) => Math.log10(t[i]));
+      drawSeries($("ts"), lt, u.map((s) => Float64Array.from(keep, (i) => s[i])), CFG.states, `u(log10 ${xlabel})`);
+    } else {
+      drawSeries($("ts"), t, u, CFG.states, `u(${xlabel})`);
+    }
     if (CFG.phase) {
       const [i, j] = CFG.phase;
       $("ph").hidden = false;

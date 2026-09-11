@@ -31,8 +31,18 @@
       <option value="sir">SIR epidemic</option>
       <option value="pend">Damped driven pendulum</option>
       <option value="rossler">Rössler</option>
+      <option value="rober">Robertson (stiff)</option>
+      <option value="vdpstiff">Van der Pol μ=1000 (stiff)</option>
     </select>
   </label>
+  <label>Solver
+    <select id="method">
+      <option value="atsit5">SimpleATsit5 (explicit, adaptive)</option>
+      <option value="rb23">Rosenbrock23 (stiff, W-method)</option>
+    </select>
+  </label>
+  <label>budget (s) <input id="budget" type="number" value="5" min="0.5" step="0.5" style="width:4em"></label>
+  <button id="stop" disabled>Stop</button>
 </div>
 <textarea id="eqs" spellcheck="false"></textarea>
 
@@ -41,7 +51,9 @@
   <label>t₀ <input id="t0" type="number" value="0" step="any"></label>
   <label>t_end <input id="tend" type="number" value="30" step="any"></label>
   <label>dt₀ <input id="dt0" type="number" value="0.01" step="any"></label>
-  <label>log₁₀ tol <input id="ltol" type="number" value="-8" step="0.5" min="-13" max="-1"></label>
+  <label>log₁₀ reltol <input id="ltol" type="number" value="-8" step="0.5" min="-13" max="-1"></label>
+  <label>log₁₀ abstol <input id="latol" type="number" value="-8" step="0.5" min="-14" max="-1"></label>
+  <label><input id="logx" type="checkbox"> log t axis</label>
 </div>
 
 <div class="ctl" id="params"></div>
@@ -52,7 +64,7 @@
 </main>
 
 <script type="module">
-import { parseSystem, makeSolver } from "./parser.mjs";
+import { parseSystem } from "./parser.mjs";
 
 const $ = (id) => document.getElementById(id);
 const out = $("out");
@@ -69,6 +81,11 @@ const PRESETS = {
              params: { c: [0.2, 0, 2], A: [1.2, 0, 3], w: [0.667, 0, 3] } },
   rossler: { eqs: "dx = -y - z\ndy = x + a*y\ndz = b + z*(x - c)", u0: "1, 1, 0", tend: 200,
              params: { a: [0.2, 0, 0.5], b: [0.2, 0, 2], c: [5.7, 0, 15] } },
+  rober:   { eqs: "dy1 = -k1*y1 + k3*y2*y3\ndy2 = k1*y1 - k2*y2^2 - k3*y2*y3\ndy3 = k2*y2^2",
+             u0: "1, 0, 0", tend: 1e5, dt0: 1e-6, ltol: -6, latol: -8, method: "rb23", logx: true,
+             params: { k1: [0.04, 0.001, 0.2], k2: [3e7, 1e6, 1e8], k3: [1e4, 1e3, 1e5] } },
+  vdpstiff:{ eqs: "dx = y\ndy = mu*(1 - x^2)*y - x", u0: "2, 0", tend: 3000, dt0: 1e-4, ltol: -6, latol: -6,
+             method: "rb23", params: { mu: [1000, 1, 5000] } },
 };
 
 // Parameter slider state persists across re-parses so editing an equation
@@ -110,6 +127,11 @@ function loadPreset(key) {
   $("u0").value = p.u0;
   $("t0").value = 0;
   $("tend").value = p.tend;
+  $("dt0").value = p.dt0 ?? 0.01;
+  $("ltol").value = p.ltol ?? -8;
+  $("latol").value = p.latol ?? $("ltol").value;
+  $("method").value = p.method ?? "atsit5";
+  $("logx").checked = !!p.logx;
   for (const [name, [value, min, max]] of Object.entries(p.params)) paramState.set(name, { value, min, max });
   lastParamKey = "";
   schedule();
@@ -140,12 +162,47 @@ function drawSeries(canvas, xs, series, labels, title) {
   });
 }
 
-let solver = null, timer = null, lastParamKey = "";
+let worker = null, ready = false, busy = false, queued = false;
+let timer = null, lastParamKey = "", reqId = 0, watchdog = null;
+
+// A wasm solve cannot be interrupted, so a busy worker is terminated and
+// replaced whenever a newer request arrives or the time budget runs out.
+function startWorker() {
+  worker?.terminate();
+  ready = false; busy = false;
+  worker = new Worker("worker.mjs", { type: "module" });
+  worker.onmessage = (e) => {
+    const m = e.data;
+    if ("ready" in m) {
+      if (!m.ready) { out.className = "err"; out.textContent = "ERROR: " + m.error; return; }
+      ready = true;
+      console.log(`generic.wasm: ${m.bytes} bytes, worker ready`);
+      if (queued) { queued = false; solve(); }
+      return;
+    }
+    if (m.id !== reqId) return;
+    busy = false;
+    clearTimeout(watchdog); $("stop").disabled = true;
+    if (!m.ok) { out.className = "err"; out.textContent = "solve failed: " + m.error; return; }
+    render(m);
+  };
+}
 
 function schedule() { clearTimeout(timer); timer = setTimeout(solve, 30); }
 
+let pending = null;
+
+function abort(reason) {
+  clearTimeout(watchdog); $("stop").disabled = true;
+  out.className = "err";
+  out.textContent = reason + "\nThe solver was terminated and reloaded; change a setting to solve again. For a stiff system choose Rosenbrock23.";
+  queued = false;
+  startWorker();
+}
+
 function solve() {
-  if (!solver) return;
+  if (!ready) { queued = true; return; }
+  if (busy) { queued = true; startWorker(); return; }
   let prog;
   try {
     prog = parseSystem($("eqs").value);
@@ -161,50 +218,59 @@ function solve() {
     out.textContent = `u₀ needs ${prog.states.length} numbers (${prog.states.join(", ")}), got "${$("u0").value}"`;
     return;
   }
-  const t0 = +$("t0").value, tend = +$("tend").value, dt0 = +$("dt0").value, tol = 10 ** +$("ltol").value;
+  const t0 = +$("t0").value, tend = +$("tend").value, dt0 = +$("dt0").value;
+  const reltol = 10 ** +$("ltol").value, method = $("method").value;
+  const abstol = method === "atsit5" ? reltol : 10 ** +$("latol").value;
+  $("latol").disabled = method === "atsit5";
   const pvals = prog.params.map((n) => paramState.get(n).value);
+  const budget = Math.max(0.5, +$("budget").value) * 1000;
 
-  try {
-    const t1 = performance.now();
-    const sol = solver.solve(prog, pvals, u0, t0, tend, dt0, tol);
-    const ms = (performance.now() - t1).toFixed(1);
-    const finals = prog.states.map((n, k) => `${n} = ${sol.u[k][sol.nsteps - 1]}`).join(", ");
-    out.className = "";
-    out.textContent =
-      `states: ${prog.states.join(", ")}   parameters: ${prog.params.join(", ") || "none"}   bytecode: ${prog.code.length} words\n` +
-      `solved in ${ms} ms, ${sol.nsteps} accepted steps, tol ${tol.toExponential(0)}\n` +
-      `final: ${finals}`;
+  pending = { prog, t0, tend, reltol, abstol, method };
+  const id = ++reqId;
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => abort(`No result after ${budget / 1000} s (${method === "rb23" ? "Rosenbrock23" : "SimpleATsit5"}).`), budget);
+  $("stop").disabled = false;
+  busy = true;
+  out.className = ""; out.textContent = "solving…";
+  worker.postMessage({ id, prog: { states: prog.states, params: prog.params, code: prog.code, starts: prog.starts, consts: prog.consts },
+                       pvals, u0, t0, tend, dt0, opts: { abstol, reltol, method } });
+}
+
+function render(m) {
+  const { prog, t0, tend, reltol, abstol, method } = pending;
+  const sol = { t: m.t, u: m.u, nsteps: m.nsteps };
+  const ms = m.ms.toFixed(1);
+  const finals = prog.states.map((n, k) => `${n} = ${sol.u[k][sol.nsteps - 1]}`).join(", ");
+  const solverName = method === "rb23" ? "Rosenbrock23" : "SimpleATsit5";
+  const tlast = sol.t[sol.nsteps - 1];
+  const early = tlast < tend ? `STOPPED EARLY at t = ${tlast} (error estimate NaN or step underflow; solution may blow up)\n` : "";
+  out.className = early ? "err" : "";
+  out.textContent = early +
+    `states: ${prog.states.join(", ")}   parameters: ${prog.params.join(", ") || "none"}   bytecode: ${prog.code.length} words\n` +
+    `${solverName}: solved in ${ms} ms, ${sol.nsteps} accepted steps, reltol ${reltol.toExponential(0)}, abstol ${abstol.toExponential(0)}\n` +
+    `final: ${finals}`;
+  if ($("logx").checked) {
+    const keep = [];
+    for (let i = 0; i < sol.nsteps; i++) if (sol.t[i] > 0) keep.push(i);
+    drawSeries($("ts"), Float64Array.from(keep, (i) => Math.log10(sol.t[i])),
+               sol.u.map((s) => Float64Array.from(keep, (i) => s[i])), prog.states, `u(log10 t)`);
+  } else {
     drawSeries($("ts"), sol.t, sol.u, prog.states, `u(t), t ∈ [${t0}, ${tend}]`);
-    const ph = $("ph");
-    if (prog.states.length >= 2) {
-      ph.style.display = "block";
-      drawSeries(ph, sol.u[0], [sol.u[1]], [prog.states[1]], `phase plane: ${prog.states[1]} vs ${prog.states[0]}`);
-    } else {
-      ph.style.display = "none";
-    }
-  } catch (e) {
-    out.className = "err"; out.textContent = "solve failed: " + (e && e.stack || e);
+  }
+  const ph = $("ph");
+  if (prog.states.length >= 2) {
+    ph.style.display = "block";
+    drawSeries(ph, sol.u[0], [sol.u[1]], [prog.states[1]], `phase plane: ${prog.states[1]} vs ${prog.states[0]}`);
+  } else {
+    ph.style.display = "none";
   }
 }
 
-try {
-  const bytes = await fetch("generic.wasm").then((r) => r.arrayBuffer());
-  const t0 = performance.now();
-  const module = await WebAssembly.compile(bytes, { builtins: ["js-string"] });
-  const imports = {};
-  for (const { module: m, name, kind } of WebAssembly.Module.imports(module)) {
-    if (m.startsWith("wasm:")) continue;
-    (imports[m] ??= {})[name] = kind === "function" ? () => {} : undefined;
-  }
-  const { exports: ex } = await WebAssembly.instantiate(module, imports);
-  solver = makeSolver(ex);
-  console.log(`generic.wasm: ${bytes.byteLength} bytes, compiled+instantiated in ${(performance.now() - t0).toFixed(1)} ms`);
-
-  $("preset").addEventListener("change", (e) => loadPreset(e.target.value));
-  $("eqs").addEventListener("input", schedule);
-  for (const id of ["u0", "t0", "tend", "dt0", "ltol"]) $(id).addEventListener("input", schedule);
-  loadPreset("vdp");
-} catch (e) {
-  out.className = "err"; out.textContent = "ERROR: " + (e && e.stack || e);
-}
+$("preset").addEventListener("change", (e) => loadPreset(e.target.value));
+$("eqs").addEventListener("input", schedule);
+for (const id of ["u0", "t0", "tend", "dt0", "ltol", "latol"]) $(id).addEventListener("input", schedule);
+for (const id of ["method", "logx"]) $(id).addEventListener("change", schedule);
+$("stop").addEventListener("click", () => abort("Stopped."));
+loadPreset("vdp");
+startWorker();
 </script>

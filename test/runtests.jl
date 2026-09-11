@@ -75,6 +75,7 @@ const VDP_EQ2 = Int32[OP_P, 1, OP_CONST, 1, OP_U, 1, OP_CONST, 2, OP_POW, OP_SUB
         @test occursin("{\"name\":\"μ\",\"value\":10.0,\"min\":0.1,\"max\":50.0,\"fixed\":false}", html)
         @test occursin("\"name\":\"tol\",\"value\":1.0e-8,\"min\":0.0,\"max\":0.0,\"fixed\":true", html)
         @test occursin("\"phase\":[1,2]", html)
+        @test occursin("\"logx\":false", html)
         @test !occursin("</script>", SciMLWasm._json("</script>"))
 
         embedded = demo_html(:f; args = [], states = ["x"], embed = UInt8[0, 0x61, 0x73, 0x6d])
@@ -87,6 +88,85 @@ const VDP_EQ2 = Int32[OP_P, 1, OP_CONST, 1, OP_U, 1, OP_CONST, 2, OP_POW, OP_SUB
             path = write_demo(dir, :f; args = [], states = ["x"])
             @test path == joinpath(dir, "index.html")
             @test isfile(path)
+        end
+    end
+
+    @testset "generic stiff path == rosenbrock23! on hand-written RHS" begin
+        # -k1*y1 + k3*y2*y3 ; k1*y1 - k2*y2^2 - k3*y2*y3 ; k2*y2^2   (params k1,k2,k3; consts [2.0])
+        e1 = Int32[OP_P, 1, OP_NEG, OP_U, 1, OP_MUL, OP_P, 3, OP_U, 2, OP_MUL, OP_U, 3, OP_MUL, OP_ADD]
+        e2 = Int32[OP_P, 1, OP_U, 1, OP_MUL, OP_P, 2, OP_U, 2, OP_CONST, 1, OP_POW, OP_MUL, OP_SUB,
+                   OP_P, 3, OP_U, 2, OP_MUL, OP_U, 3, OP_MUL, OP_SUB]
+        e3 = Int32[OP_P, 2, OP_U, 2, OP_CONST, 1, OP_POW, OP_MUL]
+        p = program([e1, e2, e3], [2.0], [0.04, 3e7, 1e4], 3)
+        out = SciMLWasm.solve_generic_rb23(p.code, p.starts, p.consts, p.params,
+                                           [1.0, 0.0, 0.0], 0.0, 1e5, 1e-6, 1e-8, 1e-6)
+        function rober!(du, u, q, t)
+            k1, k2, k3 = q
+            du[1] = -k1 * u[1] + k3 * u[2] * u[3]
+            du[2] =  k1 * u[1] - k2 * u[2]^2 - k3 * u[2] * u[3]
+            du[3] =  k2 * u[2]^2
+            nothing
+        end
+        ref = rosenbrock23!(rober!, [1.0, 0.0, 0.0], (0.0, 1e5), (0.04, 3e7, 1e4);
+                            dt0 = 1e-6, abstol = 1e-8, reltol = 1e-6)
+        @test length(out) == length(ref)
+        @test all(i -> out[i] === ref[i], eachindex(out))
+    end
+
+    @testset "rosenbrock23" begin
+        # LU against a known solve
+        A = [4.0 3.0 2.0; 2.0 1.0 3.0; 6.0 5.0 4.0]
+        b = [1.0, 2.0, 3.0]
+        Aflat = vec(copy(A)); piv = zeros(Int, 3); x = copy(b)
+        SciMLWasm.lu_factor!(Aflat, piv, 3)
+        SciMLWasm.lu_solve!(Aflat, piv, x, 3)
+        @test A * x ≈ b atol = 1e-12
+
+        # linear stiff problem with exact solution; error falls with tolerance
+        lin!(du, u, p, t) = (du[1] = -1000.0 * (u[1] - cos(t)); nothing)
+        a = 1e6 / (1e6 + 1); c = 1e3 / (1e6 + 1)
+        exact(t) = a * cos(t) + c * sin(t) + (1.0 - a) * exp(-1000.0 * t)
+        errs = map((1e-3, 1e-5, 1e-7)) do tol
+            out = rosenbrock23!(lin!, [1.0], (0.0, 5.0), nothing; dt0 = 1e-4, abstol = tol, reltol = tol)
+            @test out[1] == 0.0 && out[end - 1] == 5.0
+            abs(out[end] - exact(5.0))
+        end
+        @test errs[1] < 1e-6 && errs[2] < errs[1] && errs[3] < errs[2]
+
+        # Robertson: stiff, mass conserved, known long-time limit
+        function rober!(du, u, p, t)
+            k1, k2, k3 = p
+            du[1] = -k1 * u[1] + k3 * u[2] * u[3]
+            du[2] =  k1 * u[1] - k2 * u[2]^2 - k3 * u[2] * u[3]
+            du[3] =  k2 * u[2]^2
+            nothing
+        end
+        out = rosenbrock23!(rober!, [1.0, 0.0, 0.0], (0.0, 1e5), (0.04, 3e7, 1e4);
+                            dt0 = 1e-6, abstol = 1e-8, reltol = 1e-6)
+        n = length(out) ÷ 4
+        @test 100 < n < 2000
+        @test all(i -> out[4i - 3] <= out[4i + 1], 1:(n - 1))      # t increasing
+        @test abs(sum(out[end - 2:end]) - 1.0) < 1e-12
+        @test 0.01 < out[end - 2] < 0.03 && out[end] > 0.97
+
+        # blow-up terminates quickly with a partial result, not a hang
+        blow!(du, u, p, t) = (du[1] = u[1]^2; nothing)
+        tm = @elapsed part = rosenbrock23!(blow!, [1.0], (0.0, 5.0), nothing; dt0 = 0.01, abstol = 1e-6, reltol = 1e-6)
+        @test part[end - 1] < 5.0 && part[end - 1] > 0.99
+        @test tm < 2.0
+
+        # against OrdinaryDiffEq's Rosenbrock23 with a finite-difference Jacobian
+        if Base.find_package("OrdinaryDiffEqRosenbrock") !== nothing
+            @eval using OrdinaryDiffEqRosenbrock, ADTypes
+            prob = ODEProblem(rober!, [1.0, 0.0, 0.0], (0.0, 1e5), (0.04, 3e7, 1e4))
+            tight = solve(prob, Rodas5P(); abstol = 1e-14, reltol = 1e-14).u[end]
+            theirs = solve(prob, Rosenbrock23(autodiff = AutoFiniteDiff());
+                           dt = 1e-6, abstol = 1e-8, reltol = 1e-6)
+            relerr(v) = maximum(abs.(v .- tight) ./ abs.(tight))
+            @test relerr(out[end - 2:end]) < 10 * max(relerr(theirs.u[end]), 1e-8)
+            @test n < 5 * theirs.stats.naccept
+        else
+            @warn "OrdinaryDiffEqRosenbrock not available; skipping reference comparison"
         end
     end
 

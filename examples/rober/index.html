@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Van der Pol / adaptive SimpleATsit5 in WebAssembly</title>
+<title>Robertson / Rosenbrock23 in WebAssembly</title>
 <style>
   body { font: 14px system-ui, sans-serif; margin: 24px; color: #222; background: #fafafa; }
   main { max-width: 720px; margin: 0 auto; }
@@ -20,7 +20,7 @@
 <canvas id="dt" width="720" height="180"></canvas>
 </main>
 <script type="module">
-const CFG = {"title":"Van der Pol \/ adaptive SimpleATsit5 in WebAssembly","fn":"solve_vdp","args":[{"name":"μ","value":10.0,"min":0.1,"max":50.0,"fixed":false},{"name":"tend","value":30.0,"min":5.0,"max":100.0,"fixed":false},{"name":"tol","value":1.0e-8,"min":0.0,"max":0.0,"fixed":true}],"states":["u1","u2"],"tcol":true,"tstep":null,"phase":[1,2],"logx":false,"wasm":"vdp.wasm","wasmB64":null};
+const CFG = {"title":"Robertson \/ Rosenbrock23 in WebAssembly","fn":"solve_rober","args":[{"name":"k1","value":0.04,"min":0.001,"max":0.2,"fixed":false},{"name":"k2","value":3.0e7,"min":1.0e6,"max":1.0e8,"fixed":false},{"name":"k3","value":10000.0,"min":1000.0,"max":100000.0,"fixed":false},{"name":"tend","value":100000.0,"min":1.0,"max":1.0e6,"fixed":false},{"name":"reltol","value":1.0e-6,"min":0.0,"max":0.0,"fixed":true},{"name":"abstol","value":1.0e-8,"min":0.0,"max":0.0,"fixed":true}],"states":["y1","y2","y3"],"tcol":true,"tstep":null,"phase":null,"logx":true,"wasm":"rober.wasm","wasmB64":null};
 const $ = (id) => document.getElementById(id);
 const out = $("out");
 const COLORS = ["#1f5fbf", "#c0392b", "#27ae60", "#8e44ad", "#d35400", "#16a085", "#7f8c8d", "#2c3e50"];

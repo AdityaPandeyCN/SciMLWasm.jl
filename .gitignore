@@ -1,8 +1,7 @@
 Manifest.toml
-*.wasm
-!examples/generic/generic.wasm
-!examples/lorenz/lorenz.wasm
-!examples/vdp/vdp.wasm
 node_modules
 public
 .vercel
+
+# The built demos (examples/*/*.wasm and the generated index.html pages) are
+# committed on purpose: the site deploys straight from git. See vercel.json.

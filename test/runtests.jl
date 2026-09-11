@@ -170,6 +170,15 @@ const VDP_EQ2 = Int32[OP_P, 1, OP_CONST, 1, OP_U, 1, OP_CONST, 2, OP_POW, OP_SUB
         end
     end
 
+    @testset "bytecode contract is generated" begin
+        committed = joinpath(@__DIR__, "..", "examples", "generic", "opcodes.mjs")
+        @test isfile(committed)
+        @test read(committed, String) == SciMLWasm.opcodes_js()
+        @test occursin("END: $(Int(SciMLWasm.OP_END)),", SciMLWasm.opcodes_js())
+        @test length(SciMLWasm.OPCODES) == Int(SciMLWasm.OP_END) + 1     # dense 0..END
+        @test allunique(values(SciMLWasm.OPCODES))
+    end
+
     @testset "accessors" begin
         v = alloc_f64(Int32(3))
         set_f64(v, Int32(2), 4.5)

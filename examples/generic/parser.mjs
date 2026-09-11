@@ -12,21 +12,12 @@
 
 import { readFlat } from "../common/wasm.mjs";
 
-export const OP = {
-  CONST: 0, U: 1, P: 2, T: 3,
-  ADD: 4, SUB: 5, MUL: 6, DIV: 7, POW: 8, NEG: 9,
-  SIN: 10, COS: 11, TAN: 12, EXP: 13, LOG: 14, SQRT: 15, ABS: 16,
-  TANH: 17, SINH: 18, COSH: 19, ATAN: 20, MIN: 21, MAX: 22,
-  END: 23,
-};
+import { OP, UNARY, BINARY, MAX_DIM } from "./opcodes.mjs";
+export { OP, MAX_DIM };
 
-export const MAX_DIM = 8;
-
-const FUNCS1 = {
-  sin: OP.SIN, cos: OP.COS, tan: OP.TAN, exp: OP.EXP, log: OP.LOG, ln: OP.LOG,
-  sqrt: OP.SQRT, abs: OP.ABS, tanh: OP.TANH, sinh: OP.SINH, cosh: OP.COSH, atan: OP.ATAN,
-};
-const FUNCS2 = { min: OP.MIN, max: OP.MAX };
+// `ln` is a spelling of log; the bytecode has one LOG opcode.
+const FUNCS1 = { ...UNARY, ln: OP.LOG };
+const FUNCS2 = BINARY;
 const NAMED_CONSTS = { pi: Math.PI, e: Math.E };
 
 class ParseError extends Error {}

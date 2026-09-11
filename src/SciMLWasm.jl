@@ -25,7 +25,7 @@ using DiffEqBase
 using WasmTarget: compile_multi
 using Base64: base64encode
 
-export Program, run_program, eval_expr
+export Program, run_program, eval_expr, write_opcodes_js
 export rosenbrock23!
 export alloc_f64, alloc_i32, set_f64, set_i32, vlen, vget
 export demo_html, write_demo, build_example

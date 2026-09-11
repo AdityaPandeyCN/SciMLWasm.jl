@@ -107,7 +107,9 @@ display("text/html", demo_html(:solve_vdp; args = ..., states = ...,
 
 ## Bytecode
 
-Opcodes are defined in both `src/bytecode.jl` and `examples/generic/parser.mjs`
-and must stay in sync. Operands (`CONST`, `U`, `P`) follow the opcode as the
-next word; all indices are 1-based. `x^n` for small integer `n` is evaluated by
-repeated multiplication so that `x^2` matches Julia's `literal_pow` lowering.
+The opcode table lives once, in `src/bytecode.jl`. `write_opcodes_js` emits it
+as `examples/generic/opcodes.mjs` for the browser parser (the build script does
+this), and a test fails if the committed file ever differs from what Julia
+generates. Operands (`CONST`, `U`, `P`) follow the opcode as the next word; all
+indices are 1-based. `x^n` for small integer `n` is evaluated by repeated
+multiplication so that `x^2` matches Julia's `literal_pow` lowering.

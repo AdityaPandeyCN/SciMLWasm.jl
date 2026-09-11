@@ -4,6 +4,7 @@
 using WasmTarget
 using SciMLWasm
 
+SciMLWasm.write_opcodes_js(joinpath(@__DIR__, "opcodes.mjs"))
 bytes = compile_multi(SciMLWasm.wasm_exports())
 wasm_path = joinpath(@__DIR__, "generic.wasm")
 write(wasm_path, bytes)
